@@ -1,0 +1,52 @@
+desc:Delay
+
+slider1:100<10,500,1>Odstep impulsow (ms)
+slider2:0.6<0.1,0.95,0.01>Tlumienie impulsow
+slider3:0.5<0,1,0.01>Dry/Wet
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+
+buf_L = 0;
+buf_R = 1000000;
+
+MAX_SIZE = floor(srate * 15);
+write_pos = 0;
+
+@slider
+step_samples = floor((slider1 / 1000) * srate);
+
+@sample
+// probki do bufora
+buf_L[write_pos] = spl0;
+buf_R[write_pos] = spl1;
+
+wetL = 0;
+wetR = 0;
+
+i = 1;
+gain = slider2;
+// n tapow fir
+loop(500 ,
+  tap_delay = step_samples * i + jitter[i-1] + jitter[i];
+  read_pos = (write_pos - tap_delay) % MAX_SIZE;
+
+
+  read_pos < 0 ? read_pos += MAX_SIZE;
+
+  wetL += buf_L[read_pos] * gain ;
+  wetR += buf_R[read_pos] * gain;
+
+  gain *= slider2 ;
+  i += 1;
+);
+
+spl0 = (spl0 * (1 - slider3)) + (wetL * slider3);
+spl1 = (spl1 * (1 - slider3)) + (wetR * slider3);
+
+// modulo bufora
+write_pos = (write_pos + 1) % MAX_SIZE;

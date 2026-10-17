@@ -1,0 +1,30 @@
+desc:tremolo with two lfo's
+
+//tremolo or auto pan with two lfo's
+
+slider1:1<0,10,0.1>lfo1
+slider2:1<0,10,0.1>lfo2
+slider3:1<0,1,1(VCA,VCF)> VCA or VCF
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+faza = 0;
+
+@slider
+
+lfo1_speed = slider1;
+lfo1_krok = 2 * $pi * lfo1_speed/srate;
+
+@sample
+
+faza += lfo1_krok;
+(faza >= 2 * $pi) ? (faza -= 2 * $pi);
+mod_a_L = (sin(faza) + 1) * 0.5;
+mod_a_R = (cos(faza + 0.5 * $pi) + 1) * 0.5;
+
+spl0 = spl0 * mod_a_L;
+spl1 = spl1 * mod_a_R;

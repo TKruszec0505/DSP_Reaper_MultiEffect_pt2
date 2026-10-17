@@ -1,0 +1,203 @@
+desc:VA ProCo RAT
+
+slider1:0<0,36,0.1>Input Drive (dB)
+slider2:10<0.5,50,0.5>Rezystor R (kOhm)
+slider3:47<0,2000,1>Kondensator C (nF)
+slider4:0<-24,50,0.1>Output Gain (dB)
+slider5:1<0,1,1{Off,On}>Auto-Gain (Vclip Normalizer)
+slider6:3.3<0.1,10,0.1>Kondensator filtra (nF)
+slider7:0.0001<0.0001,500,1>opAmp Gain (kOhm)
+slider8:
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+//init bloku 1 (opAmp stage)
+C2_opamp = 0.0000000001;
+C1_opamp = 0.000000220;
+R_opamp = 1000;
+
+lastVout1_opamp_L = 0;
+lastVout1_opamp_R = 0;
+lastVin1_opamp_L = 0;
+lastVin1_opamp_R = 0;
+
+lastVout2_opamp_L = 0;
+lastVout2_opamp_R = 0;
+lastVin2_opamp_L = 0;
+lastVin2_opamp_R = 0;
+
+//init bloku 2 (cliping satge)
+Vt = 0.026;
+Is = 0.0000000025;
+is_vt_ratio = Is / Vt;
+
+Vclip = 0.65;
+inv_Vclip = 1 / Vclip;
+
+vState_L = 0;
+vState_R = 0;
+lastVout_L = 0;
+lastVout_R = 0;
+lastVin_L = 0;
+lastVin_R = 0;
+
+//init bloku 3 (LPF satge)
+lastToneOut_L = 0;
+lastToneOut_R = 0;
+lastToneIn_L = 0;
+lastToneIn_R = 0;
+
+@slider
+//blok 1
+R_pot_opamp = slider7 * 1000;
+
+K = 2 * srate;
+
+alfa = R_opamp * R_pot_opamp * C1_opamp * C2_opamp;
+gamma = alfa;
+
+beta = R_opamp * C1_opamp + R_pot_opamp * C2_opamp + R_pot_opamp * C1_opamp;
+Delta = R_opamp * C1_opamp + R_pot_opamp * C2_opamp;
+
+a0_opamp = gamma * K*K + Delta * K + 1;
+a1_opamp = 2 - 2 * gamma * K*K;
+a2_opamp = gamma * K*K - Delta * K + 1;
+
+b0_opamp = alfa * K*K + beta * K + 1;
+b1_opamp = 2 - 2 * alfa * K*K;
+b2_opamp = alfa * K*K - beta * K + 1;
+
+A0 = a1_opamp / a0_opamp;
+A1 = a2_opamp / a0_opamp;
+
+B0 = b0_opamp / a0_opamp;
+B1 = b1_opamp / a0_opamp;
+B2 = b2_opamp / a0_opamp;
+
+drive = exp(slider1 * 0.11512925465);
+out_gain = exp(slider4 * 0.11512925465);
+
+in_scale = slider5 ? (Vclip * drive) : drive;
+out_scale = slider5 ? (inv_Vclip * out_gain) : out_gain;
+
+// blok 2 i 3
+
+R = slider2 * 1000;
+C = max(0.000000000001, slider3 * 0.000000001);
+C2 = slider6 * 0.000000001;
+
+T = 1 / srate;
+Rc = T / (2 * C);
+Req = Rc;
+Rc2 = T / (2 * C2);
+
+W = 2 * srate * R * C2;
+
+b0 = 1 / (1 + W);
+a1 = (W - 1) / (1 + W);
+
+@sample
+//
+// przetwazanie kanalu lewgo
+//
+// implementacja blok 1
+// implementacja blok 1 (lewy kanał)
+Vin_L_opamp = spl0 * in_scale;
+
+Vout_L_opamp = B0*Vin_L_opamp + B1*lastVin1_opamp_L + B2*lastVin2_opamp_L - A0*lastVout1_opamp_L - A1*lastVout2_opamp_L;
+
+//Vout_L_opamp = max(-4.5, min(4.5, Vout_L_opamp));
+
+lastVin2_opamp_L = lastVin1_opamp_L;
+lastVin1_opamp_L = Vin_L_opamp;
+
+lastVout2_opamp_L = lastVout1_opamp_L;
+lastVout1_opamp_L = Vout_L_opamp;
+
+// implementacja blok 2
+vin_L = Vout_L_opamp;
+vAttack_L = vin_L - vState_L;
+vOut_L = lastVout_L;
+
+loop(6,
+  arg = max(-40, min(40, vOut_L / Vt));
+
+  e_pos = exp(arg);
+  e_neg = exp(-arg);
+
+  id = Is * (e_pos - e_neg);
+  did_dv = is_vt_ratio * (e_pos + e_neg);
+
+  f = vAttack_L - vOut_L - (Req * id);
+  df = -1 - (Req * did_dv);
+
+  delta = f / df;
+  vOut_L -= delta;
+);
+
+current_L = (vAttack_L - vOut_L) / Req;
+vState_L += 2 * Rc * current_L;
+lastVout_L = vOut_L;
+
+// implementacja blok 3
+vToneIn_L = vOut_L;
+vToneOut_L = b0*vToneIn_L + b0*lastToneIn_L - a1*lastToneOut_L;
+lastToneOut_L = vToneOut_L;
+lastToneIn_L = vToneIn_L;
+
+//
+// przetwazanie kanlu prawego
+//
+//blok 1
+// implementacja blok 1 (lewy kanał)
+Vin_R_opamp = spl1 * in_scale;
+
+Vout_R_opamp = B0*Vin_R_opamp + B1*lastVin1_opamp_R + B2*lastVin2_opamp_R - A0*lastVout1_opamp_R - A1*lastVout2_opamp_R;
+
+
+//Vout_R_opamp = max(-4.5, min(4.5, Vout_R_opamp));
+
+lastVin2_opamp_R = lastVin1_opamp_R;
+lastVin1_opamp_R = Vin_R_opamp;
+
+lastVout2_opamp_R = lastVout1_opamp_R;
+lastVout1_opamp_R = Vout_R_opamp;
+
+//blok 2
+vin_R = Vout_R_opamp;
+vAttack_R = vin_R - vState_R;
+vOut_R = lastVout_R;
+
+loop(6,
+  arg = max(-40, min(40, vOut_R / Vt));
+
+  e_pos = exp(arg);
+  e_neg = exp(-arg);
+
+  id = Is * (e_pos - e_neg);
+  did_dv = is_vt_ratio * (e_pos + e_neg);
+
+  f = vAttack_R - vOut_R - (Req * id);
+  df = -1 - (Req * did_dv);
+
+  delta = f / df;
+  vOut_R -= delta;
+);
+
+current_R = (vAttack_R - vOut_R) / Req;
+vState_R += 2 * Rc * current_R;
+lastVout_R = vOut_R;
+
+//blok 3
+vToneIn_R = vOut_R;
+vToneOut_R = b0*vToneIn_R + b0*lastToneIn_R - a1*lastToneOut_R;
+lastToneOut_R = vToneOut_R;
+lastToneIn_R = vToneIn_R;
+
+//out l/r
+spl0 = max(-1.0, min(1.0, vToneOut_L * out_scale));
+spl1 = max(-1.0, min(1.0, vToneOut_R * out_scale));

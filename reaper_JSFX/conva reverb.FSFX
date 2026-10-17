@@ -1,0 +1,202 @@
+desc: Partitioned Convolution Reverb
+
+slider1:/ir_files::choose IR file(.wav)
+slider2:0.5<0,1,0.01>Dry/Wet
+slider3:0<-36,12,0.1>IR Gain (dB)
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+PART_SIZE = 2048;
+FFT_SIZE = PART_SIZE * 2; // 4096
+MAX_PARTS = 64;
+
+//mem allocation
+ir_parts_base  = 0;
+freq_hist_base = ir_parts_base + (MAX_PARTS * FFT_SIZE);
+in_block       = freq_hist_base + (MAX_PARTS * FFT_SIZE);
+work_buf       = in_block + PART_SIZE;
+accum_spec     = work_buf + FFT_SIZE;
+raw_file_buf   = accum_spec + FFT_SIZE;
+temp_ir        = raw_file_buf + 262144;
+//overlap-add buffer
+OLA_BUF_SIZE   = FFT_SIZE * MAX_PARTS * 2;
+ola_buf        = temp_ir + 262144;
+
+// buf clear
+i = 0;
+loop(OLA_BUF_SIZE, ola_buf[i] = 0; i += 1;);
+loop(MAX_PARTS * FFT_SIZE, freq_hist_base[i] = 0; i += 1;);
+loop(PART_SIZE, in_block[i] = 0; i += 1;);
+
+in_pos        = 0;
+history_head  = 0;
+ola_read_pos  = 0;
+ola_write_pos = PART_SIZE;
+
+ir_num_parts  = 0;
+ir_loaded     = 0;
+last_slider1  = -999;
+
+@slider
+dry_wet = slider2;
+ir_gain_linear = 10 ^ (slider3 / 20);
+
+// loading and slicing IR file
+slider1 != last_slider1 ? (
+    last_slider1 = slider1;
+    handle = file_open(slider1);
+    handle >= 0 ? (
+        file_riff(handle, nch, srate_file);
+        total_file_samples = file_avail(handle);
+
+        (total_file_samples > 260000) ? total_file_samples = 260000;
+        file_mem(handle, raw_file_buf, total_file_samples);
+        file_close(handle);
+
+        frames = total_file_samples / (nch > 0 ? nch : 1);
+        max_allowed_frames = PART_SIZE * MAX_PARTS;
+        (frames > max_allowed_frames) ? frames = max_allowed_frames;
+
+        i = 0;
+        loop(frames,
+            (nch == 2) ? (
+                temp_ir[i] = (raw_file_buf[i * 2] + raw_file_buf[(i * 2) + 1]) * 0.5;
+            ) : (
+                temp_ir[i] = raw_file_buf[i];
+            );
+            i += 1;
+        );
+        ir_len = frames;
+
+        max_val = 0;
+        i = 0;
+        loop(ir_len,
+            val = abs(temp_ir[i]);
+            (val > max_val) ? max_val = val;
+            i += 1;
+        );
+        max_val > 0 ? (
+            i = 0;
+            loop(ir_len, temp_ir[i] /= max_val; i += 1;);
+        );
+
+        ir_num_parts = ceil(ir_len / PART_SIZE);
+        (ir_num_parts > MAX_PARTS) ? ir_num_parts = MAX_PARTS;
+
+        i = 0;
+        loop(MAX_PARTS * FFT_SIZE, ir_parts_base[i] = 0; i += 1;);
+
+        p = 0;
+        loop(ir_num_parts,
+            dest_ptr = ir_parts_base + (p * FFT_SIZE);
+            i = 0;
+            loop(PART_SIZE,
+                src_idx = (p * PART_SIZE) + i;
+                dest_ptr[i] = (src_idx < ir_len) ? temp_ir[src_idx] : 0;
+                i += 1;
+            );
+            i = PART_SIZE;
+            loop(FFT_SIZE - PART_SIZE, dest_ptr[i] = 0; i += 1;);
+
+            fft_real(dest_ptr, FFT_SIZE);
+            fft_permute(dest_ptr, FFT_SIZE / 2);
+            p += 1;
+        );
+
+        i = 0;
+        loop(OLA_BUF_SIZE, ola_buf[i] = 0; i += 1;);
+        loop(MAX_PARTS * FFT_SIZE, freq_hist_base[i] = 0; i += 1;);
+        history_head  = 0;
+        ola_read_pos  = 0;
+        ola_write_pos = PART_SIZE;
+
+        ir_loaded = 1;
+    ) : (
+        ir_loaded = 0;
+    );
+);
+
+@sample
+wet_sample = ola_buf[ola_read_pos];
+ola_buf[ola_read_pos] = 0;
+ola_read_pos = (ola_read_pos + 1) % OLA_BUF_SIZE;
+
+// new sample loading
+in_block[in_pos] = spl0;
+in_pos += 1;
+
+// processing when a block is filled
+(in_pos >= PART_SIZE && ir_loaded) ? (
+    in_pos = 0;
+
+    i = 0;
+    loop(FFT_SIZE,
+        work_buf[i] = (i < PART_SIZE) ? in_block[i] : 0;
+        i += 1;
+    );
+
+    fft_real(work_buf, FFT_SIZE);
+    fft_permute(work_buf, FFT_SIZE / 2);
+
+    history_head = (history_head - 1 + MAX_PARTS) % MAX_PARTS;
+    dest_hist = freq_hist_base + (history_head * FFT_SIZE);
+    i = 0;
+    loop(FFT_SIZE,
+        dest_hist[i] = work_buf[i];
+        i += 1;
+    );
+
+    i = 0;
+    loop(FFT_SIZE, accum_spec[i] = 0; i += 1;);
+
+    p = 0;
+    loop(ir_num_parts,
+        hp = (history_head + p) % MAX_PARTS;
+        src_hist = freq_hist_base + (hp * FFT_SIZE);
+
+        i = 0;
+        loop(FFT_SIZE,
+            work_buf[i] = src_hist[i];
+            i += 1;
+        );
+
+        convolve_c(work_buf, ir_parts_base + (p * FFT_SIZE), FFT_SIZE / 2);
+
+        i = 0;
+        loop(FFT_SIZE,
+            accum_spec[i] += work_buf[i];
+            i += 1;
+        );
+
+        p += 1;
+    );
+
+    fft_ipermute(accum_spec, FFT_SIZE / 2);
+    ifft_real(accum_spec, FFT_SIZE);
+
+    // compensating for energy overload due to FFT/IFFT and IR gain
+    headroom_factor = 0.125; // ok. -18 dB
+    i = 0;
+    loop(FFT_SIZE,
+        accum_spec[i] = (accum_spec[i] / FFT_SIZE) * ir_gain_linear * headroom_factor;
+        i += 1;
+    );
+
+    i = 0;
+    loop(FFT_SIZE,
+        target_idx = (ola_write_pos + i) % OLA_BUF_SIZE;
+        ola_buf[target_idx] += accum_spec[i];
+        i += 1;
+    );
+
+    ola_write_pos = (ola_write_pos + PART_SIZE) % OLA_BUF_SIZE;
+);
+
+final_wet = ir_loaded ? wet_sample : spl0;
+
+spl0 = (spl0 * (1.0 - dry_wet)) + (final_wet * dry_wet);
+spl1 = (spl1 * (1.0 - dry_wet)) + (final_wet * dry_wet);

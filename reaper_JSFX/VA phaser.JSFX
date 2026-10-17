@@ -1,0 +1,190 @@
+desc:VA phaser
+
+slider1:0<-150,12,1>gain (dB)
+slider2:0.5<0,10,0.1>lfo speed
+slider3:1<0,1,0.01>depth
+slider4:0<0,2,1{1. triangle,2. LDR,3. Ramp}>modulation
+slider5:2<0.5, 10, 0.1>Rezystancja R_min [kOhm]
+slider6:100<20, 500, 5>Rezystancja R_max [kOhm]
+slider7:10<1, 100, 1>Kondensator C [nF]
+slider8:0.5<0,0.95,0.01> feedback
+slider9:0<0,1,0.01> initial phase
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+@init
+tri_smooth = 0;
+
+ldr_min = exp(-1.5);
+ldr_range = exp(1.5) - ldr_min;
+
+last_Vin_L = 0;   //x[n-1]
+last_Vin_R = 0;
+
+last_Vin_2_L = 0;
+last_Vin_2_R = 0;
+
+last_Vin_3_L = 0;
+last_Vin_3_R = 0;
+
+last_Vin_4_L = 0;
+last_Vin_4_R = 0;
+
+last_Vin_5_L = 0;
+last_Vin_5_R = 0;
+
+last_Vin_6_L = 0;
+last_Vin_6_R = 0;
+
+last_Vin_7_L = 0;
+last_Vin_7_R = 0;
+
+last_Vout_L = 0;  //y[n-1]
+last_Vout_R = 0;
+
+last_Vout_2_L = 0;
+last_Vout_2_R = 0;
+
+last_Vout_3_L = 0;
+last_Vout_3_R = 0;
+
+last_Vout_4_L = 0;
+last_Vout_4_R = 0;
+
+last_Vout_5_L = 0;
+last_Vout_5_R = 0;
+
+last_Vout_6_L = 0;
+last_Vout_6_R = 0;
+
+last_Vout_7_L = 0;
+last_Vout_7_R = 0;
+
+Rmin = 100;
+
+@slider
+in_phase = slider8;
+lfo1_speed = slider2;
+depth = slider3;
+
+R_min = slider5 * 1000;
+R_max = slider6 * 1000;
+C = slider7 * 0.000000001;
+
+feedback = slider8;
+
+gain_linear = 10 ^ (slider1 / 20);
+
+lfo_krok = (2 * $pi * lfo1_speed)/ srate;
+k = 2 * srate;
+
+faza = 2*$pi*in_phase;
+
+@sample
+faza += lfo_krok;
+(faza >= 2 * $pi) ? (faza -= 2 * $pi);
+
+// modulation waveform selection
+(slider4 == 0) ? (
+    tri = (faza < $pi) ? (-1.0 + 2.0 * faza / $pi) : (3.0 - 2.0 * faza / $pi);
+    tri_smooth = tri_smooth + 0.05 * (tri - tri_smooth);
+    lfo_out = (tri_smooth + 1.0) * 0.5;
+) : (slider4 == 1) ? (
+    ldr_raw = exp(2*sin(faza) * 1.5);
+    lfo_out = (ldr_raw - ldr_min) / ldr_range;
+) : (
+    lfo_out = faza / (2 * $pi);
+);
+
+R_L = R_min * pow(R_max / R_min, lfo_out * depth);
+R_R = R_min * pow(R_max / R_min, lfo_out * depth);
+
+// all pass filter coefficients
+A_L = (1 - k * R_L * C) / (1 + k * R_L * C);
+A_R = (1 - k * R_R * C) / (1 + k * R_R * C);
+// L channel processing
+
+//all pass cascade
+  //all pass 1
+Vin_L = spl0 + (feedback*last_Vout_7_L); //x[n]
+Vout_L = A_L * Vin_L + last_Vin_L - A_L * last_Vout_L;
+last_Vin_L = Vin_L;
+last_Vout_L = Vout_L;
+  //all pass 2
+Vin_2_L = Vout_L;
+Vout_2_L = A_L * Vin_2_L + last_Vin_2_L - A_L * last_Vout_2_L;
+last_Vin_2_L = Vin_2_L;
+last_Vout_2_L = Vout_2_L;
+  //all pass 3
+Vin_3_L = Vout_2_L;
+Vout_3_L = A_L * Vin_3_L + last_Vin_3_L - A_L * last_Vout_3_L;
+last_Vin_3_L = Vin_3_L;
+last_Vout_3_L = Vout_3_L;
+  //all pass 4
+Vin_4_L = Vout_3_L;
+Vout_4_L = A_L * Vin_4_L + last_Vin_4_L - A_L * last_Vout_4_L;
+last_Vin_4_L = Vin_4_L;
+last_Vout_4_L = Vout_4_L;
+  //all pass 5
+Vin_5_L = Vout_4_L;
+Vout_5_L = A_L * Vin_5_L + last_Vin_5_L - A_L * last_Vout_5_L;
+last_Vin_5_L = Vin_5_L;
+last_Vout_5_L = Vout_5_L;
+  //all pass 6
+Vin_6_L = Vout_5_L;
+Vout_6_L = A_L * Vin_6_L + last_Vin_6_L - A_L * last_Vout_6_L;
+last_Vin_6_L = Vin_6_L;
+last_Vout_6_L = Vout_6_L;
+  //all pass 7
+Vin_7_L = Vout_6_L;
+Vout_7_L = A_L * Vin_7_L + last_Vin_7_L - A_L * last_Vout_7_L;
+last_Vin_7_L = Vin_7_L;
+last_Vout_7_L = Vout_7_L;
+
+// R channel processing
+
+//all pass cascade
+  //all pass 1
+Vin_R = spl1 + (feedback*last_Vout_7_R); //x[n]
+Vout_R = A_R * Vin_R + last_Vin_R - A_R * last_Vout_R;
+last_Vin_R = Vin_R;
+last_Vout_R = Vout_R;
+  //all pass 2
+Vin_2_R = Vout_R;
+Vout_2_R = A_R * Vin_2_R + last_Vin_2_R - A_R * last_Vout_2_R;
+last_Vin_2_R = Vin_2_R;
+last_Vout_2_R = Vout_2_R;
+  //all pass 3
+Vin_3_R = Vout_2_R;
+Vout_3_R = A_R * Vin_3_R + last_Vin_3_R - A_R * last_Vout_3_R;
+last_Vin_3_R = Vin_3_R;
+last_Vout_3_R = Vout_3_R;
+  //all pass 4
+Vin_4_R = Vout_3_R;
+Vout_4_R = A_R * Vin_4_R + last_Vin_4_R - A_R * last_Vout_4_R;
+last_Vin_4_R = Vin_4_R;
+last_Vout_4_R = Vout_4_R;
+  //all pass 5
+Vin_5_R = Vout_4_R;
+Vout_5_R = A_R * Vin_5_R + last_Vin_5_R - A_R * last_Vout_5_R;
+last_Vin_5_R = Vin_5_R;
+last_Vout_5_R = Vout_5_R;
+  //all pass 6
+Vin_6_R = Vout_5_R;
+Vout_6_R = A_R * Vin_6_R + last_Vin_6_R - A_R * last_Vout_6_R;
+last_Vin_6_R = Vin_6_R;
+last_Vout_6_R = Vout_6_R;
+  //all pass 7
+Vin_7_R = Vout_6_R;
+Vout_7_R = A_R * Vin_7_R + last_Vin_7_R - A_R * last_Vout_7_R;
+last_Vin_7_R = Vin_7_R;
+last_Vout_7_R = Vout_7_R;
+
+// OUT
+spl0 = (spl0 + Vout_7_L) * gain_linear * 0.5;
+spl1 = (spl1 + Vout_7_R) * gain_linear * 0.5;
+
+// we process each channel separately, so we can make stereo effects (like initial shift on one channel).
